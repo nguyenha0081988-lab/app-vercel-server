@@ -1,85 +1,84 @@
-# File: api/app.py (Chỉ thay thế phần đầu)
+# File: api/app.py (Đã sửa lỗi cấu hình Vercel/Cloudinary)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
 import cloudinary.api
-import os 
+import os
 from io import BytesIO
 
 app = Flask(__name__)
 
 # ====================================================================
-# SỬA LỖI CUỐI CÙNG: Ưu tiên dùng Biến Môi trường CLOUDINARY_URL
+# Đọc biến môi trường CLOUDINARY_URL
+# Vercel cần biến này để xác thực
 # ====================================================================
-# Đọc biến môi trường CLOUDINARY_URL (cú pháp ưa thích của thư viện)
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL') 
 # ====================================================================
 
 # Cấu hình Cloudinary
 try:
     if CLOUDINARY_URL:
-        # Nếu CLOUDINARY_URL tồn tại, sử dụng nó để cấu hình
+        # Nếu CLOUDINARY_URL tồn tại, sử dụng nó để cấu hình (Phương pháp được khuyến nghị)
         cloudinary.config(cloudinary_url=CLOUDINARY_URL)
-        print("Sử dụng CLOUDINARY_URL để cấu hình.")
     else:
-        # Nếu không, cố gắng dùng 3 biến riêng lẻ (cho môi trường DEV)
+        # Nếu thiếu CLOUDINARY_URL, ứng dụng sẽ cố gắng đọc 3 biến riêng lẻ (Phương pháp dự phòng)
         cloudinary.config( 
           cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME'), 
           api_key = os.environ.get('CLOUDINARY_API_KEY'), 
           api_secret = os.environ.get('CLOUDINARY_API_SECRET')
         )
-
 except Exception as e:
+    # Bắt lỗi cấu hình để ít nhất Server có thể khởi động (endpoint '/' hoạt động)
     print(f"Lỗi cấu hình Cloudinary: {e}") 
     pass 
 
-# ... (Phần còn lại của code Server API giữ nguyên) ...
+# Kiểm tra sức khỏe Server: Kiểm tra xem Cloudinary đã cấu hình chưa
+def is_cloudinary_configured():
+    """Kiểm tra xem cấu hình Cloudinary có sẵn sàng cho các lệnh API không."""
+    return bool(cloudinary.config().cloud_name)
+
 
 # 1. API LIST: Liệt kê tất cả file
 @app.route('/list', methods=['GET'])
 def list_files():
     """Lấy danh sách file và URL của chúng từ Cloudinary."""
+    if not is_cloudinary_configured():
+         return jsonify({'error': 'Lỗi: Khóa Cloudinary chưa được thiết lập chính xác trên Vercel.'}), 500
+
     try:
         all_files = []
         
-        # Lấy danh sách RAW files (TXT, PDF, DOC, ZIP...)
-        raw_result = cloudinary.api.resources(
-            type="upload", 
-            resource_type="raw", 
-            max_results=200
-        )
-        for resource in raw_result.get('resources', []):
-            file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
-            all_files.append({
-                'name': file_name_with_ext,
-                'size': resource.get('bytes'),
-                'url': resource.get('url') 
-            })
-            
-        # Lấy danh sách IMAGE files (JPG, PNG, GIF...)
-        image_result = cloudinary.api.resources(
-            type="upload", 
-            resource_type="image",
-            max_results=200
-        )
-        for resource in image_result.get('resources', []):
-             file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
-             all_files.append({
-                'name': file_name_with_ext,
-                'size': resource.get('bytes'),
-                'url': resource.get('url')
-            })
+        # Hàm trợ giúp để lấy resources
+        def get_resources(resource_type):
+            result = cloudinary.api.resources(
+                type="upload", 
+                resource_type=resource_type, 
+                max_results=200
+            )
+            for resource in result.get('resources', []):
+                file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
+                all_files.append({
+                    'name': file_name_with_ext,
+                    'size': resource.get('bytes'),
+                    'url': resource.get('url') 
+                })
+
+        get_resources("raw")   # Lấy RAW files (TXT, PDF, DOC, ZIP...)
+        get_resources("image") # Lấy IMAGE files (JPG, PNG, GIF...)
 
         return jsonify(all_files), 200
 
     except Exception as e:
         # Trả về lỗi chi tiết nếu có vấn đề khi gọi API Cloudinary
-        return jsonify({'error': f'Lỗi Cloudinary/API: {str(e)}'}), 500
+        return jsonify({'error': f'Lỗi Cloudinary API: {str(e)}. Kiểm tra lại CLOUDINARY_URL.'}), 500
 
 # 2. API UPLOAD: Tải file lên (Ghi đè file trùng tên)
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """Nhận file từ client và tải lên Cloudinary, ghi đè nếu trùng tên."""
+    if not is_cloudinary_configured():
+         return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
+         
     if 'file' not in request.files:
         return jsonify({'error': 'Không tìm thấy file trong yêu cầu.'}), 400
     
@@ -107,8 +106,7 @@ def upload_file():
 # Endpoint mặc định cho Vercel (Kiểm tra sức khỏe Server)
 @app.route('/')
 def home():
-    # Kiểm tra xem cấu hình có được tải không
-    if not CLOUDINARY_CLOUD_NAME:
+    if not is_cloudinary_configured():
         return "Lỗi: Khóa Cloudinary chưa được thiết lập trong Biến Môi trường Vercel!", 500
     return "Server API Cloudinary đang hoạt động.", 200
 
