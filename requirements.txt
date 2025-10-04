@@ -1,3 +1,4 @@
 Flask
 requests
 cloudinary
+python-dotenv  # Cần thiết cho các ứng dụng Serverless
