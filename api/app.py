@@ -1,32 +1,39 @@
-# File: api/app.py (Code đã được sửa lỗi)
+# File: api/app.py (Chỉ thay thế phần đầu)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
 import cloudinary.api
-import os # Thư viện cần thiết để đọc biến môi trường
+import os 
 from io import BytesIO
 
 app = Flask(__name__)
 
 # ====================================================================
-# SỬA LỖI: ĐỌC TỪ BIẾN MÔI TRƯỜNG CỦA VERCEL
+# SỬA LỖI CUỐI CÙNG: Ưu tiên dùng Biến Môi trường CLOUDINARY_URL
 # ====================================================================
-CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME') 
-CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
-CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
+# Đọc biến môi trường CLOUDINARY_URL (cú pháp ưa thích của thư viện)
+CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL') 
 # ====================================================================
 
 # Cấu hình Cloudinary
 try:
-    # Lệnh này phải nằm trong try/except để tránh lỗi khi các biến chưa được thiết lập
-    cloudinary.config( 
-      cloud_name = CLOUDINARY_CLOUD_NAME, 
-      api_key = CLOUDINARY_API_KEY, 
-      api_secret = CLOUDINARY_API_SECRET
-    )
+    if CLOUDINARY_URL:
+        # Nếu CLOUDINARY_URL tồn tại, sử dụng nó để cấu hình
+        cloudinary.config(cloudinary_url=CLOUDINARY_URL)
+        print("Sử dụng CLOUDINARY_URL để cấu hình.")
+    else:
+        # Nếu không, cố gắng dùng 3 biến riêng lẻ (cho môi trường DEV)
+        cloudinary.config( 
+          cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME'), 
+          api_key = os.environ.get('CLOUDINARY_API_KEY'), 
+          api_secret = os.environ.get('CLOUDINARY_API_SECRET')
+        )
+
 except Exception as e:
     print(f"Lỗi cấu hình Cloudinary: {e}") 
-    pass # Bỏ qua lỗi cấu hình để Vercel có thể chạy được endpoint '/'
+    pass 
+
+# ... (Phần còn lại của code Server API giữ nguyên) ...
 
 # 1. API LIST: Liệt kê tất cả file
 @app.route('/list', methods=['GET'])
