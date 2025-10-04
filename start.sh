@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Render chạy gunicorn để phục vụ Flask ổn định hơn
+# Lệnh chạy ứng dụng Flask (api.app là file Flask)
 gunicorn api.app:app
