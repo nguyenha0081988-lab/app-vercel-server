@@ -1,4 +1,4 @@
-# File: api/app.py (Đã sửa lỗi logic triệt để)
+# File: api/app.py (Server API Flask cho Render/Cloudinary)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
@@ -7,12 +7,13 @@ import os
 
 app = Flask(__name__)
 
-# Đọc biến môi trường CLOUDINARY_URL
+# Đọc biến môi trường CLOUDINARY_URL (Được thiết lập trên Render Dashboard)
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL') 
 
-# Cấu hình Cloudinary
+# --- Cấu hình Cloudinary ---
 try:
     if CLOUDINARY_URL:
+        # Phương pháp cấu hình ưu tiên (Tự động đọc các khóa từ URL)
         cloudinary.config(cloudinary_url=CLOUDINARY_URL, secure=True)
     
     IS_CONFIGURED = bool(cloudinary.config().cloud_name)
@@ -25,19 +26,16 @@ except Exception as e:
 def is_cloudinary_configured():
     return IS_CONFIGURED
 
-# 1. API LIST: Liệt kê tất cả file (SỬA LỖI LOGIC TỐI ƯU)
+# 1. API LIST: Liệt kê tất cả file
 @app.route('/list', methods=['GET'])
 def list_files():
-    """Lấy danh sách file và URL của chúng từ Cloudinary."""
     if not is_cloudinary_configured():
-        return jsonify({'error': 'Lỗi: Khóa Cloudinary chưa được thiết lập chính xác trên Vercel.'}), 500
+        return jsonify({'error': 'Lỗi: Khóa Cloudinary chưa được thiết lập chính xác.'}), 500
 
     all_files = []
     
-    # Hàm trợ giúp để lấy resources
     def get_resources(resource_type):
         try:
-            # Thử gọi API. Nếu loại này trống, Cloudinary trả về mảng rỗng.
             result = cloudinary.api.resources(
                 type="upload",
                 resource_type=resource_type,
@@ -51,7 +49,7 @@ def list_files():
                     'url': resource.get('url')
                 })
         except Exception as e:
-            # Rất quan trọng: Báo lỗi nhưng KHÔNG CRASH SERVER
+            # Bắt lỗi khi chỉ một loại tài nguyên bị lỗi (ví dụ: chỉ có ảnh, không có raw)
             print(f"Lỗi khi lấy tài nguyên {resource_type}: {e}")
             pass
 
@@ -60,7 +58,7 @@ def list_files():
 
     return jsonify(all_files), 200
 
-# 2. API UPLOAD: Tải file lên (Giữ nguyên)
+# 2. API UPLOAD: Tải file lên (Ghi đè file trùng tên)
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if not is_cloudinary_configured():
@@ -82,14 +80,36 @@ def upload_file():
             overwrite=True
         )
         
-        return jsonify({
-            'message': f'File {file.filename} đã tải lên thành công!'
-        }), 201
+        return jsonify({'message': f'File {file.filename} đã tải lên thành công!'}), 201
     
     except Exception as e:
         return jsonify({'error': f'Lỗi upload lên Cloudinary: {str(e)}'}), 500
 
-# Endpoint mặc định (Giữ nguyên)
+# 3. API DELETE: Xóa file khỏi Cloudinary (CHỨC NĂNG MỚI)
+@app.route('/delete/<filename>', methods=['DELETE'])
+def delete_file(filename):
+    """Xóa file bằng public_id."""
+    if not is_cloudinary_configured():
+        return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
+    
+    public_id, file_ext = os.path.splitext(filename)
+    resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif'] else "raw"
+
+    try:
+        result = cloudinary.uploader.destroy(
+            public_id,
+            resource_type=resource_type
+        )
+        
+        if result.get('result') == 'not found':
+             return jsonify({'error': f'File {filename} không tìm thấy trên Cloudinary.'}), 404
+             
+        return jsonify({'message': f'File {filename} đã xóa thành công.'}), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Lỗi khi xóa file trên Cloudinary: {str(e)}'}), 500
+
+# Endpoint mặc định (Kiểm tra sức khỏe Server)
 @app.route('/')
 def home():
     if not is_cloudinary_configured():
