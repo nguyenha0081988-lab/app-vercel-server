@@ -1,4 +1,4 @@
 Flask
 cloudinary
 requests
-gunicorn  <-- Thêm dòng này
+gunicorn
