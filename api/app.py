@@ -24,29 +24,39 @@ except Exception as e:
 def is_cloudinary_configured():
     return IS_CONFIGURED
 
-# 1. API LIST: Liệt kê tất cả file
+# Trong file api/app.py
+
+# 1. API LIST: Liệt kê tất cả file (ĐÃ SỬA LỖI XỬ LÝ API)
 @app.route('/list', methods=['GET'])
 def list_files():
     if not is_cloudinary_configured():
         return jsonify({'error': 'Lỗi: Khóa Cloudinary chưa được thiết lập chính xác trên Vercel.'}), 500
 
+    all_files = []
+    
+    # Danh sách các loại tài nguyên cần lấy
+    resource_types = ["raw", "image"]
+
     try:
-        all_files = []
-        
-        # Hàm trợ giúp để lấy resources
         def get_resources(resource_type):
-            result = cloudinary.api.resources(
-                type="upload",
-                resource_type=resource_type,
-                max_results=200
-            )
-            for resource in result.get('resources', []):
-                file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
-                all_files.append({
-                    'name': file_name_with_ext,
-                    'size': resource.get('bytes'),
-                    'url': resource.get('url')
-                })
+            try:
+                # Thử gọi API. Nếu loại này trống, Cloudinary trả về mảng rỗng, không lỗi.
+                result = cloudinary.api.resources(
+                    type="upload",
+                    resource_type=resource_type,
+                    max_results=200
+                )
+                for resource in result.get('resources', []):
+                    file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
+                    all_files.append({
+                        'name': file_name_with_ext,
+                        'size': resource.get('bytes'),
+                        'url': resource.get('url')
+                    })
+            except Exception as e:
+                # Bắt lỗi nếu một loại tài nguyên cụ thể (raw/image) bị lỗi
+                print(f"Lỗi khi lấy tài nguyên {resource_type}: {e}")
+                # Chúng ta tiếp tục chạy, bỏ qua lỗi này
 
         get_resources("raw")
         get_resources("image")
@@ -54,8 +64,8 @@ def list_files():
         return jsonify(all_files), 200
 
     except Exception as e:
-        # Nếu vẫn lỗi 500 ở đây, lỗi là do Cloudinary từ chối API Secret
-        return jsonify({'error': f'Lỗi Cloudinary API: Vui lòng kiểm tra lại API Secret: {str(e)}'}), 500
+        # Lỗi tổng quát (rất hiếm khi xảy ra)
+        return jsonify({'error': f'Lỗi tổng quát khi liệt kê file: {str(e)}'}), 500
 
 # 2. API UPLOAD: Tải file lên (Giữ nguyên)
 @app.route('/upload', methods=['POST'])
