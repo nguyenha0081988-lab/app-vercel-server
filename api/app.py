@@ -1,4 +1,4 @@
-# File: api/app.py (Đã khắc phục triệt để lỗi DELETE và ổn định)
+# File: api/app.py (Đã thêm chức năng Đổi tên)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
@@ -43,7 +43,6 @@ def list_files():
             for resource in result.get('resources', []):
                 file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
                 
-                # LỌC BỎ CÁC FILE MẪU HỆ THỐNG
                 if file_name_with_ext.startswith('samples/'):
                     continue
                 
@@ -74,7 +73,7 @@ def upload_file():
     filename_base, file_ext = os.path.splitext(file.filename)
 
     try:
-        resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp'] else "raw" # Thêm webp
+        resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp'] else "raw"
 
         cloudinary.uploader.upload(
             file,
@@ -88,10 +87,9 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': f'Lỗi upload lên Cloudinary: {str(e)}'}), 500
 
-# 3. API DELETE: Xóa file khỏi Cloudinary (SỬA LỖI LOGIC PHÂN LOẠI)
+# 3. API DELETE: Xóa file khỏi Cloudinary
 @app.route('/delete/<filename>', methods=['DELETE'])
 def delete_file(filename):
-    """Xóa file bằng cách thử cả hai loại tài nguyên: image và raw."""
     if not is_cloudinary_configured():
         return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
     
@@ -100,7 +98,7 @@ def delete_file(filename):
     public_id, file_ext = os.path.splitext(decoded_filename)
     
     is_deleted = False
-    resource_types_to_try = ["image", "raw"] # Thử image trước, sau đó là raw
+    resource_types_to_try = ["image", "raw"]
     
     for r_type in resource_types_to_try:
         try:
@@ -109,21 +107,56 @@ def delete_file(filename):
                 resource_type=r_type
             )
             
-            # Nếu xóa thành công
             if result.get('result') == 'ok':
                 is_deleted = True
                 break 
                 
         except Exception as e:
-            # Ghi lại lỗi nhưng không dừng, tiếp tục thử loại khác
             print(f"Lỗi khi thử xóa loại {r_type}: {e}")
             pass 
 
     if is_deleted:
         return jsonify({'message': f'File {decoded_filename} đã xóa thành công.'}), 200
     else:
-        # Nếu đã thử cả hai loại mà không xóa được
         return jsonify({'error': f'Thất bại: Không thể xóa file {decoded_filename}. Khóa API hợp lệ nhưng file có thể không tồn tại.'}), 500
+
+# 4. API RENAME: Đổi tên file (CHỨC NĂNG MỚI)
+@app.route('/rename', methods=['POST'])
+def rename_file():
+    if not is_cloudinary_configured():
+        return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
+
+    old_filename_encoded = request.form.get('old_filename')
+    new_filename_base = request.form.get('new_filename_base') 
+    file_ext = request.form.get('file_ext') 
+
+    if not old_filename_encoded or not new_filename_base or not file_ext:
+        return jsonify({'error': 'Tham số rename bị thiếu.'}), 400
+
+    old_filename = urllib.parse.unquote(old_filename_encoded)
+    old_public_id, _ = os.path.splitext(old_filename)
+    new_public_id = new_filename_base
+
+    resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp'] else "raw"
+
+    try:
+        # Bước 1: Đổi tên file (Sử dụng hàm rename của Cloudinary)
+        upload_result = cloudinary.uploader.rename(
+            old_public_id,
+            new_public_id, 
+            resource_type=resource_type,
+            overwrite=True
+        )
+
+        return jsonify({
+            'message': f'Đã đổi tên thành công từ {old_public_id} thành {new_public_id}{file_ext}',
+            'new_filename': new_public_id + file_ext,
+            'new_url': upload_result.get('secure_url', upload_result.get('url'))
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Lỗi đổi tên: {str(e)}'}), 500
+
 
 # Endpoint mặc định
 @app.route('/')
