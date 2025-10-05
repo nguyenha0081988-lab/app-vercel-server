@@ -1,4 +1,4 @@
-# File: api/app.py (Đã sửa lỗi URL Encoding cho tên file)
+# File: api/app.py (Đã khắc phục triệt để lỗi DELETE và ổn định)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
@@ -25,7 +25,7 @@ except Exception as e:
 def is_cloudinary_configured():
     return IS_CONFIGURED
 
-# 1. API LIST: Liệt kê tất cả file
+# 1. API LIST: Liệt kê tất cả file (Đã lọc bỏ file mẫu)
 @app.route('/list', methods=['GET'])
 def list_files():
     if not is_cloudinary_configured():
@@ -43,7 +43,7 @@ def list_files():
             for resource in result.get('resources', []):
                 file_name_with_ext = resource.get('public_id') + os.path.splitext(resource.get('url'))[1]
                 
-                # BỎ QUA CÁC FILE MẪU HỆ THỐNG
+                # LỌC BỎ CÁC FILE MẪU HỆ THỐNG
                 if file_name_with_ext.startswith('samples/'):
                     continue
                 
@@ -74,7 +74,7 @@ def upload_file():
     filename_base, file_ext = os.path.splitext(file.filename)
 
     try:
-        resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif'] else "raw"
+        resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp'] else "raw" # Thêm webp
 
         cloudinary.uploader.upload(
             file,
@@ -88,32 +88,42 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': f'Lỗi upload lên Cloudinary: {str(e)}'}), 500
 
-# 3. API DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI GIẢI MÃ URL)
+# 3. API DELETE: Xóa file khỏi Cloudinary (SỬA LỖI LOGIC PHÂN LOẠI)
 @app.route('/delete/<filename>', methods=['DELETE'])
 def delete_file(filename):
-    """Xóa file khỏi Cloudinary, hỗ trợ tên file đã mã hóa."""
+    """Xóa file bằng cách thử cả hai loại tài nguyên: image và raw."""
     if not is_cloudinary_configured():
         return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
     
-    # SỬA LỖI: GIẢI MÃ URL TRƯỚC KHI XỬ LÝ (ví dụ: chuyển '%20' thành ' ')
+    # GIẢI MÃ URL TRƯỚC KHI XỬ LÝ
     decoded_filename = urllib.parse.unquote(filename) 
-    
     public_id, file_ext = os.path.splitext(decoded_filename)
-    resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif'] else "raw"
+    
+    is_deleted = False
+    resource_types_to_try = ["image", "raw"] # Thử image trước, sau đó là raw
+    
+    for r_type in resource_types_to_try:
+        try:
+            result = cloudinary.uploader.destroy(
+                public_id,
+                resource_type=r_type
+            )
+            
+            # Nếu xóa thành công
+            if result.get('result') == 'ok':
+                is_deleted = True
+                break 
+                
+        except Exception as e:
+            # Ghi lại lỗi nhưng không dừng, tiếp tục thử loại khác
+            print(f"Lỗi khi thử xóa loại {r_type}: {e}")
+            pass 
 
-    try:
-        result = cloudinary.uploader.destroy(
-            public_id,
-            resource_type=resource_type
-        )
-        
-        if result.get('result') == 'not found':
-             return jsonify({'error': f'File {decoded_filename} không tìm thấy trên Cloudinary.'}), 404
-             
+    if is_deleted:
         return jsonify({'message': f'File {decoded_filename} đã xóa thành công.'}), 200
-
-    except Exception as e:
-        return jsonify({'error': f'Lỗi khi xóa file trên Cloudinary: {str(e)}'}), 500
+    else:
+        # Nếu đã thử cả hai loại mà không xóa được
+        return jsonify({'error': f'Thất bại: Không thể xóa file {decoded_filename}. Khóa API hợp lệ nhưng file có thể không tồn tại.'}), 500
 
 # Endpoint mặc định
 @app.route('/')
