@@ -1,10 +1,10 @@
-# File: api/app.py (Đã thêm chức năng Đổi tên)
+# File: api/app.py (Đã tối ưu và ổn định)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
 import cloudinary.api
 import os
-import urllib.parse # Thư viện cần thiết để giải mã URL
+import urllib.parse
 
 app = Flask(__name__)
 
@@ -25,7 +25,7 @@ except Exception as e:
 def is_cloudinary_configured():
     return IS_CONFIGURED
 
-# 1. API LIST: Liệt kê tất cả file (Đã lọc bỏ file mẫu)
+# 1. API LIST: Liệt kê tất cả file
 @app.route('/list', methods=['GET'])
 def list_files():
     if not is_cloudinary_configured():
@@ -60,7 +60,7 @@ def list_files():
 
     return jsonify(all_files), 200
 
-# 2. API UPLOAD: Tải file lên 
+# 2. API UPLOAD: Tải file lên (Dùng cho cả file mới và cập nhật)
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if not is_cloudinary_configured():
@@ -93,7 +93,6 @@ def delete_file(filename):
     if not is_cloudinary_configured():
         return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
     
-    # GIẢI MÃ URL TRƯỚC KHI XỬ LÝ
     decoded_filename = urllib.parse.unquote(filename) 
     public_id, file_ext = os.path.splitext(decoded_filename)
     
@@ -120,7 +119,7 @@ def delete_file(filename):
     else:
         return jsonify({'error': f'Thất bại: Không thể xóa file {decoded_filename}. Khóa API hợp lệ nhưng file có thể không tồn tại.'}), 500
 
-# 4. API RENAME: Đổi tên file (CHỨC NĂNG MỚI)
+# 4. API RENAME: Đổi tên file
 @app.route('/rename', methods=['POST'])
 def rename_file():
     if not is_cloudinary_configured():
@@ -140,19 +139,14 @@ def rename_file():
     resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.webp'] else "raw"
 
     try:
-        # Bước 1: Đổi tên file (Sử dụng hàm rename của Cloudinary)
-        upload_result = cloudinary.uploader.rename(
+        cloudinary.uploader.rename(
             old_public_id,
             new_public_id, 
             resource_type=resource_type,
             overwrite=True
         )
 
-        return jsonify({
-            'message': f'Đã đổi tên thành công từ {old_public_id} thành {new_public_id}{file_ext}',
-            'new_filename': new_public_id + file_ext,
-            'new_url': upload_result.get('secure_url', upload_result.get('url'))
-        }), 200
+        return jsonify({'message': f'Đã đổi tên thành công từ {old_public_id} thành {new_public_id}{file_ext}'}), 200
 
     except Exception as e:
         return jsonify({'error': f'Lỗi đổi tên: {str(e)}'}), 500
