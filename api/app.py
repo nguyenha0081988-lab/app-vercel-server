@@ -1,9 +1,10 @@
-# File: api/app.py (Đã sửa lỗi lọc file mẫu Cloudinary)
+# File: api/app.py (Đã sửa lỗi URL Encoding cho tên file)
 
 from flask import Flask, request, jsonify
 import cloudinary.uploader
 import cloudinary.api
 import os
+import urllib.parse # Thư viện cần thiết để giải mã URL
 
 app = Flask(__name__)
 
@@ -13,7 +14,6 @@ CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
 # --- Cấu hình Cloudinary ---
 try:
     if CLOUDINARY_URL:
-        # Sử dụng cú pháp URL chuẩn và an toàn
         cloudinary.config(cloudinary_url=CLOUDINARY_URL, secure=True)
     
     IS_CONFIGURED = bool(cloudinary.config().cloud_name)
@@ -22,11 +22,10 @@ except Exception as e:
     print(f"Lỗi khởi tạo Cloudinary: {e}")
     IS_CONFIGURED = False
 
-# Kiểm tra sức khỏe Server
 def is_cloudinary_configured():
     return IS_CONFIGURED
 
-# 1. API LIST: Liệt kê tất cả file (ĐÃ LỌC BỎ THƯ MỤC 'samples/')
+# 1. API LIST: Liệt kê tất cả file
 @app.route('/list', methods=['GET'])
 def list_files():
     if not is_cloudinary_configured():
@@ -62,7 +61,7 @@ def list_files():
 
     return jsonify(all_files), 200
 
-# 2. API UPLOAD: Tải file lên (Giữ nguyên)
+# 2. API UPLOAD: Tải file lên 
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if not is_cloudinary_configured():
@@ -89,13 +88,17 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': f'Lỗi upload lên Cloudinary: {str(e)}'}), 500
 
-# 3. API DELETE: Xóa file khỏi Cloudinary
+# 3. API DELETE: Xóa file khỏi Cloudinary (ĐÃ SỬA LỖI GIẢI MÃ URL)
 @app.route('/delete/<filename>', methods=['DELETE'])
 def delete_file(filename):
+    """Xóa file khỏi Cloudinary, hỗ trợ tên file đã mã hóa."""
     if not is_cloudinary_configured():
         return jsonify({'error': 'Lỗi: Server API chưa được cấu hình.'}), 500
     
-    public_id, file_ext = os.path.splitext(filename)
+    # SỬA LỖI: GIẢI MÃ URL TRƯỚC KHI XỬ LÝ (ví dụ: chuyển '%20' thành ' ')
+    decoded_filename = urllib.parse.unquote(filename) 
+    
+    public_id, file_ext = os.path.splitext(decoded_filename)
     resource_type = "image" if file_ext.lower() in ['.jpg', '.jpeg', '.png', '.gif'] else "raw"
 
     try:
@@ -105,9 +108,9 @@ def delete_file(filename):
         )
         
         if result.get('result') == 'not found':
-             return jsonify({'error': f'File {filename} không tìm thấy trên Cloudinary.'}), 404
+             return jsonify({'error': f'File {decoded_filename} không tìm thấy trên Cloudinary.'}), 404
              
-        return jsonify({'message': f'File {filename} đã xóa thành công.'}), 200
+        return jsonify({'message': f'File {decoded_filename} đã xóa thành công.'}), 200
 
     except Exception as e:
         return jsonify({'error': f'Lỗi khi xóa file trên Cloudinary: {str(e)}'}), 500
