@@ -19,10 +19,7 @@ import cloudinary.utils
 # BIẾN CẤU HÌNH VÀ KHỞI TẠO
 # ====================================================================
 
-# Lấy Biến môi trường CLOUDINARY_URL (Biến duy nhất được sử dụng)
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
-
-# Biến CLOUDINARY_CLOUD_NAME sẽ được trích xuất tự động từ URL
 CLOUDINARY_CLOUD_NAME = None 
 
 # Định nghĩa Public IDs và tên file tạm thời trên Server
@@ -44,12 +41,10 @@ if not os.path.exists(UPLOAD_FOLDER):
 if CLOUDINARY_URL:
     try:
         cloudinary.config(cloudinary_url=CLOUDINARY_URL)
-        # Trích xuất CLOUD_NAME sau khi cấu hình
         CLOUDINARY_CLOUD_NAME = cloudinary.config().cloud_name
         print("Cloudinary cấu hình thành công bằng CLOUDINARY_URL.")
     except Exception as e:
         print(f"LỖI: Cấu hình Cloudinary bằng URL thất bại: {e}")
-        # Đặt lại thành None để báo hiệu cấu hình thất bại
         CLOUDINARY_CLOUD_NAME = None 
 else:
     print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
@@ -66,8 +61,6 @@ def admin_required(f):
     """Decorator kiểm tra quyền admin."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Giữ nguyên logic đơn giản: chỉ là bảo vệ route khỏi client ngoài
-        # Client PyQt đã có logic kiểm tra quyền Admin
         return f(*args, **kwargs)
     return decorated_function
 
@@ -77,10 +70,7 @@ def download_file_from_cloudinary(public_id, local_filename):
         raise Exception("Cloudinary chưa được cấu hình.")
         
     try:
-        # Tải xuống bằng resource_type='raw' cho JSON/TXT
-        # Tên file phải có đuôi để tạo URL chính xác (.json, .txt)
         file_ext = os.path.splitext(local_filename)[1].strip('.')
-        
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=file_ext)[0]
         
         response = requests.get(url, stream=True)
@@ -203,8 +193,8 @@ def upload_file():
         uploaded_file.save(local_path)
         
         try:
-            # Tải lên Cloudinary
-            result = cloudinary.uploader.upload(local_path, folder="client_files", public_id=os.path.splitext(filename)[0], overwrite=True)
+            # Tải lên Cloudinary. Đặt resource_type="auto" để Cloudinary tự phân loại media
+            result = cloudinary.uploader.upload(local_path, folder="client_files", public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
             os.remove(local_path) 
             
             return jsonify({
@@ -218,43 +208,53 @@ def upload_file():
     
     return jsonify({"message": "Something went wrong"}), 500
 
-# 2. Lấy danh sách file media (Đã sửa lỗi resource_type)
+# 2. Lấy danh sách file media (Đã sửa lỗi resource_type an toàn hơn)
 @app.route('/list', methods=['GET'])
 def list_files():
+    if not CLOUDINARY_CLOUD_NAME:
+         return jsonify({"message": "Lỗi cấu hình Cloudinary trên server."}), 500
+         
     try:
-        # Lấy danh sách resource type 'upload' (bao gồm image, video, raw, auto,...)
-        result = cloudinary.api.resources(type="upload", prefix="client_files/", max_results=500)
+        # Lấy danh sách tài nguyên trong thư mục 'client_files/'
+        # Sử dụng type="upload" là đúng, nhưng chúng ta sẽ thử nhiều loại tài nguyên
+        
+        # Thử lấy tất cả tài nguyên (image, video, raw)
+        result_image = cloudinary.api.resources(type="upload", prefix="client_files/", max_results=500, resource_type="image")
+        result_raw = cloudinary.api.resources(type="upload", prefix="client_files/", max_results=500, resource_type="raw")
+
+        # Gộp các kết quả lại (tránh trùng lặp nếu có)
+        all_resources = {r['public_id']: r for r in result_image.get('resources', []) + result_raw.get('resources', [])}
         
         files_list = []
-        for resource in result['resources']:
+        for public_id, resource in all_resources.items():
             
-            # Xử lý trường hợp public_id không có / (thư mục)
-            public_id_parts = resource['public_id'].split('/')
-            filename_base = public_id_parts[-1]
+            file_format = resource.get('format')
+            if not file_format: continue # Bỏ qua nếu không có format (chưa hoàn thành upload)
             
-            # Đảm bảo format tồn tại
-            file_format = resource.get('format', 'raw') 
-            
+            filename_base = public_id.split('/')[-1]
             filename_with_ext = filename_base + '.' + file_format
             
             # Lấy URL secure (HTTPS)
             secure_url = cloudinary.utils.url(
-                resource['public_id'], 
+                public_id, 
                 format=file_format,
                 secure=True,
-                resource_type=resource['resource_type'] # Sử dụng resource_type chính xác
+                resource_type=resource.get('resource_type', 'image') 
             )
             
-            files_list.append({
-                "name": filename_with_ext,
-                "url": secure_url,
-                "size": resource['bytes']
-            })
+            # Chỉ trả về file media, không trả về file cấu hình (users/log)
+            if filename_base not in ['users', 'activity_log']:
+                files_list.append({
+                    "name": filename_with_ext,
+                    "url": secure_url,
+                    "size": resource['bytes']
+                })
             
         return jsonify(files_list), 200
     except Exception as e:
-        # Trả về lỗi 500 nếu có lỗi Cloudinary API
-        return jsonify({"message": f"Error listing files: {e}"}), 500
+        print(f"LỖI API CLOUDINARY KHI LẤY LIST: {e}")
+        # Trả về lỗi 500 nhưng kèm thông báo rõ ràng hơn
+        return jsonify({"message": f"Lỗi Server khi truy vấn Cloudinary API: {e}"}), 500
 
 # 3. Xóa file media
 @app.route('/delete/<filename>', methods=['DELETE'])
@@ -263,8 +263,12 @@ def delete_file(filename):
         base_name, ext = os.path.splitext(filename)
         public_id = "client_files/" + base_name
         
-        # Xóa file (sử dụng resource_type="raw" nếu không chắc chắn)
+        # Thử xóa tài nguyên với resource_type='image' (mặc định cho media)
         result = cloudinary.uploader.destroy(public_id, resource_type="image") 
+        
+        if result.get('result') == 'not found':
+             # Nếu không tìm thấy, thử xóa với resource_type='raw'
+            result = cloudinary.uploader.destroy(public_id, resource_type="raw")
         
         if result.get('result') == 'ok':
             return jsonify({"message": f"File {filename} deleted successfully"}), 200
