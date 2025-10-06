@@ -76,8 +76,8 @@ def download_file_from_cloudinary(public_id, local_filename):
         file_ext = os.path.splitext(local_filename)[1].strip('.')
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=file_ext)[0]
         
-        # SỬ DỤNG REQUEST_TIMEOUT
-        response = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT) 
+        # SỬ DỤNG REQUEST_TIMEOUT VÀ TẮT XÁC THỰC SSL (verify=False) ĐỂ NÂNG CAO ĐỘ BỀN MẠNG
+        response = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT, verify=False) 
         response.raise_for_status()
         with open(local_filename, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -179,16 +179,8 @@ def log_action_server(username, action, details="", status="Thành công"):
         print(f"LỖI LỚN KHI GHI LOG LÊN CLOUDINARY: {e}")
 
 # ====================================================================
-# API ROUTES
+# API ROUTES CHO FILE MEDIA
 # ====================================================================
-
-# <<< ROUTE MỚI: Xử lý URL gốc (/) >>>
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({
-        "status": "Server Running",
-        "message": "API Server đã hoạt động. Vui lòng sử dụng ứng dụng client."
-    }), 200
 
 # 1. Tải lên file media
 @app.route('/upload', methods=['POST'])
@@ -259,7 +251,6 @@ def list_files():
     try:
         files_list = []
         
-        # Danh sách các loại tài nguyên cần tìm kiếm (Đã sửa lỗi không hiện file)
         resource_types = ["image", "raw", "video", "auto"]
         all_resources = {}
 
