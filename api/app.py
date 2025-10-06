@@ -22,7 +22,7 @@ import cloudinary.api
 
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
 CLOUDINARY_CLOUD_NAME = None 
-REQUEST_TIMEOUT = 60 # Đặt timeout chung cho network I/O là 60 giây
+REQUEST_TIMEOUT = 60 
 
 # Định nghĩa Public IDs và tên file tạm thời trên Server
 USER_FILE_PUBLIC_ID = 'app_config/users'
@@ -30,7 +30,8 @@ LOG_FILE_PUBLIC_ID = 'app_config/activity_log'
 USER_LOCAL_TEMP = 'users_temp.json'
 LOG_LOCAL_TEMP = 'log_temp.txt'
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'temp_uploads')
-MEDIA_FOLDER = "client_files/" # Thư mục lưu trữ media
+# Đã sửa: Định nghĩa thư mục media KHÔNG có dấu '/' ở cuối
+MEDIA_FOLDER = "client_files" 
 
 # --- KHỞI TẠO FLASK VÀ CẤU HÌNH ---
 app = Flask(__name__)
@@ -51,6 +52,13 @@ if CLOUDINARY_URL:
         CLOUDINARY_CLOUD_NAME = None 
 else:
     print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
+
+# ====================================================================
+# LƯU TRỮ DỮ LIỆU GLOBAL (TẢI LƯỜI)
+# ====================================================================
+
+# Biến global lưu trữ CSDL người dùng trong bộ nhớ sau lần tải đầu tiên
+GLOBAL_USERS_DATA = None 
 
 # ====================================================================
 # HÀM TIỆN ÍCH CHUNG VÀ XỬ LÝ DỮ LIỆU CLOUDINARY
@@ -76,7 +84,6 @@ def download_file_from_cloudinary(public_id, local_filename):
         file_ext = os.path.splitext(local_filename)[1].strip('.')
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=file_ext)[0]
         
-        # SỬ DỤNG REQUEST_TIMEOUT VÀ TẮT XÁC THỰC SSL (verify=False) ĐỂ NÂNG CAO ĐỘ BỀN MẠNG
         response = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT, verify=False) 
         response.raise_for_status()
         with open(local_filename, 'wb') as f:
@@ -101,7 +108,7 @@ def upload_file_to_cloudinary(local_filename, public_id):
             resource_type='raw',
             public_id=public_id,
             overwrite=True,
-            timeout=REQUEST_TIMEOUT # SỬ DỤNG REQUEST_TIMEOUT
+            timeout=REQUEST_TIMEOUT 
         )
         return result
     except Exception as e:
@@ -122,25 +129,42 @@ def initialize_default_users():
         return {} 
 
 def load_users_data():
-    """Tải dữ liệu người dùng từ Cloudinary."""
+    """Tải dữ liệu người dùng từ Cloudinary (Chỉ tải nếu chưa có trong bộ nhớ)."""
+    global GLOBAL_USERS_DATA
+    
+    # Kiểm tra nếu dữ liệu đã có trong bộ nhớ, trả về ngay lập tức
+    if GLOBAL_USERS_DATA is not None:
+        return GLOBAL_USERS_DATA
+    
+    # Nếu chưa có, tiến hành tải từ Cloudinary
     try:
         download_file_from_cloudinary(USER_FILE_PUBLIC_ID, USER_LOCAL_TEMP)
         with open(USER_LOCAL_TEMP, 'r', encoding='utf-8') as f:
             users = json.load(f)
         os.remove(USER_LOCAL_TEMP)
+        
+        GLOBAL_USERS_DATA = users # Lưu vào bộ nhớ
         return users
     except FileNotFoundError:
-        return initialize_default_users() 
+        users = initialize_default_users() 
+        GLOBAL_USERS_DATA = users
+        return users
     except Exception:
-        return initialize_default_users()
+        users = initialize_default_users() # Tạo mặc định nếu lỗi tải
+        GLOBAL_USERS_DATA = users
+        return users
 
 def save_users_data(users):
     """Lưu dữ liệu người dùng vào file users.json trên Cloudinary."""
+    global GLOBAL_USERS_DATA
+    
     try:
         with open(USER_LOCAL_TEMP, 'w', encoding='utf-8') as f:
             json.dump(users, f, indent=4)
         upload_file_to_cloudinary(USER_LOCAL_TEMP, USER_FILE_PUBLIC_ID)
         os.remove(USER_LOCAL_TEMP)
+        
+        GLOBAL_USERS_DATA = users # Cập nhật lại bộ nhớ
     except Exception as e:
         print(f"LỖI KHÔNG THỂ LƯU USER LÊN CLOUDINARY: {e}")
 
@@ -182,6 +206,14 @@ def log_action_server(username, action, details="", status="Thành công"):
 # API ROUTES CHO FILE MEDIA
 # ====================================================================
 
+# <<< ROUTE MỚI: Xử lý URL gốc (/) >>>
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "status": "Server Running",
+        "message": "API Server đã hoạt động. Vui lòng sử dụng ứng dụng client."
+    }), 200
+
 # 1. Tải lên file media
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -204,9 +236,10 @@ def upload_file():
         
         try:
             # Tải lên Cloudinary. Đặt resource_type="auto"
+            # Đã sửa: sử dụng MEDIA_FOLDER mới (không có dấu /)
             result = cloudinary.uploader.upload(
                 local_path, 
-                folder=MEDIA_FOLDER.strip('/'), 
+                folder=MEDIA_FOLDER, 
                 public_id=os.path.splitext(filename)[0], 
                 overwrite=True, 
                 resource_type="auto", 
@@ -218,12 +251,12 @@ def upload_file():
             if not file_format:
                  file_format = 'raw' 
 
-            # Xóa file tạm
-            try:
-                if local_path:
+            # Xử lý dọn dẹp file tạm
+            if local_path:
+                try:
                     os.remove(local_path)
-            except OSError as e:
-                print(f"CẢNH BÁO: Không thể xóa file tạm {local_path}: {e}")
+                except OSError:
+                    pass 
             
             # Trả về tên file chính xác (base name + format)
             return jsonify({
@@ -256,10 +289,10 @@ def list_files():
 
         for r_type in resource_types:
             try:
-                # Dùng timeout 60s
+                # Đã sửa: thêm dấu '/' vào prefix để Cloudinary chỉ tìm trong folder đó
                 result = cloudinary.api.resources(
                     type="upload", 
-                    prefix=MEDIA_FOLDER, 
+                    prefix=MEDIA_FOLDER + '/', 
                     max_results=500, 
                     resource_type=r_type, 
                     timeout=REQUEST_TIMEOUT
@@ -307,7 +340,7 @@ def list_files():
 def delete_file(filename):
     try:
         base_name, ext = os.path.splitext(filename)
-        public_id = MEDIA_FOLDER + base_name
+        public_id = MEDIA_FOLDER + '/' + base_name # Đã sửa để dùng MEDIA_FOLDER mới
         
         # Thử xóa với resource_type="image" và "raw"
         result_img = cloudinary.uploader.destroy(public_id, resource_type="image", timeout=REQUEST_TIMEOUT) 
@@ -408,6 +441,5 @@ def read_all_logs():
 
 
 if __name__ == '__main__':
-    # Khởi tạo CSDL người dùng lần đầu nếu chưa có
-    load_users_data()
+    # KHÔNG TẢI USERS_DATA Ở ĐÂY NỮA, vì nó gây lỗi Timeout
     app.run(debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
