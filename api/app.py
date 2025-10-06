@@ -19,10 +19,7 @@ import cloudinary.utils
 # BIẾN CẤU HÌNH VÀ KHỞI TẠO
 # ====================================================================
 
-# Lấy Biến môi trường CLOUDINARY_URL (Biến duy nhất được sử dụng)
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
-
-# Biến CLOUDINARY_CLOUD_NAME sẽ được trích xuất tự động từ URL
 CLOUDINARY_CLOUD_NAME = None 
 
 # Định nghĩa Public IDs và tên file tạm thời trên Server
@@ -45,12 +42,10 @@ if not os.path.exists(UPLOAD_FOLDER):
 if CLOUDINARY_URL:
     try:
         cloudinary.config(cloudinary_url=CLOUDINARY_URL)
-        # Trích xuất CLOUD_NAME sau khi cấu hình
         CLOUDINARY_CLOUD_NAME = cloudinary.config().cloud_name
         print("Cloudinary cấu hình thành công bằng CLOUDINARY_URL.")
     except Exception as e:
         print(f"LỖI: Cấu hình Cloudinary bằng URL thất bại: {e}")
-        # Đặt lại thành None để báo hiệu cấu hình thất bại
         CLOUDINARY_CLOUD_NAME = None 
 else:
     print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
@@ -224,21 +219,19 @@ def list_files():
          return jsonify({"message": "Lỗi cấu hình Cloudinary trên server."}), 500
          
     try:
-        # Lấy danh sách tài nguyên trong thư mục 'client_files/'
-        # Gộp kết quả từ image và raw để đảm bảo tìm thấy tất cả các loại tệp (media + docs)
+        # LƯU Ý: Đây là đoạn code quan trọng nhất đã được tối ưu cho độ ổn định.
+        # Chúng ta dùng loại (type) chung nhất: "upload" để tìm kiếm.
         
-        result_image = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type="image")
-        result_raw = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type="raw")
-
-        # Gộp các kết quả lại
-        all_resources = {r['public_id']: r for r in result_image.get('resources', []) + result_raw.get('resources', [])}
+        result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500)
         
         files_list = []
-        for public_id, resource in all_resources.items():
+        for resource in result.get('resources', []):
             
             file_format = resource.get('format')
-            if not file_format: continue 
+            # Kiểm tra lỗi cấu trúc dữ liệu
+            if not file_format or not resource.get('public_id'): continue 
             
+            public_id = resource['public_id']
             filename_base = public_id.split('/')[-1]
             filename_with_ext = filename_base + '.' + file_format
             
