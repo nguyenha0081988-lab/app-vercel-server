@@ -14,7 +14,7 @@ import requests
 import cloudinary
 import cloudinary.uploader
 import cloudinary.utils
-import cloudinary.api # <<< ĐÃ THÊM DÒNG IMPORT THIẾU NÀY >>>
+import cloudinary.api
 
 # ====================================================================
 # BIẾN CẤU HÌNH VÀ KHỞI TẠO
@@ -192,36 +192,53 @@ def upload_file():
     if uploaded_file.filename == '':
         return jsonify({"message": "No selected file"}), 400
     
+    local_path = None # Khởi tạo local_path
+    
     if uploaded_file:
         filename = secure_filename(uploaded_file.filename)
         local_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         uploaded_file.save(local_path)
         
         try:
-            # Tải lên Cloudinary. Đặt resource_type="auto" để Cloudinary tự phân loại media
+            # Tải lên Cloudinary. resource_type="auto"
             result = cloudinary.uploader.upload(local_path, folder=MEDIA_FOLDER.strip('/'), public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
-            os.remove(local_path) 
+            
+            # --- SỬA LỖI KEYERROR: 'format' ---
+            file_format = result.get('format', os.path.splitext(filename)[1].strip('.'))
+            if not file_format:
+                 file_format = 'raw' # Dùng 'raw' nếu không có đuôi
+
+            # Xóa file tạm
+            try:
+                if local_path:
+                    os.remove(local_path)
+            except OSError as e:
+                print(f"CẢNH BÁO: Không thể xóa file tạm {local_path}: {e}")
             
             return jsonify({
                 "message": "Upload successful",
-                "filename": result['public_id'].split('/')[-1] + '.' + result['format'],
+                "filename": result['public_id'].split('/')[-1] + '.' + file_format, # SỬ DỤNG file_format ĐÃ KIỂM TRA
                 "url": result['secure_url']
             }), 200
         except Exception as e:
-            os.remove(local_path)
+            # --- SỬA LỖI FILE NOT FOUND SAU KHI XẢY RA EXCEPTION ---
+            if local_path:
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass 
             return jsonify({"message": f"Cloudinary upload failed: {e}"}), 500
     
     return jsonify({"message": "Something went wrong"}), 500
 
-# 2. Lấy danh sách file media (Đã sửa lỗi resource_type an toàn hơn)
+# 2. Lấy danh sách file media 
 @app.route('/list', methods=['GET'])
 def list_files():
     if not CLOUDINARY_CLOUD_NAME:
          return jsonify({"message": "Lỗi cấu hình Cloudinary trên server."}), 500
          
     try:
-        # LƯU Ý: Đây là đoạn code quan trọng nhất đã được tối ưu cho độ ổn định.
-        
+        # Lấy danh sách tài nguyên trong thư mục 'client_files/'
         result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500)
         
         files_list = []
@@ -358,7 +375,7 @@ def record_log():
 @admin_required
 def read_all_logs():
     logs = read_logs_from_cloudinary()
-    return jsonify([log.strip() for log in logs]), 200
+    return jsonify([log.strip() for log in logs]), 00
 
 
 if __name__ == '__main__':
