@@ -19,7 +19,10 @@ import cloudinary.utils
 # BIẾN CẤU HÌNH VÀ KHỞI TẠO
 # ====================================================================
 
+# Lấy Biến môi trường CLOUDINARY_URL (Biến duy nhất được sử dụng)
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
+
+# Biến CLOUDINARY_CLOUD_NAME sẽ được trích xuất tự động từ URL
 CLOUDINARY_CLOUD_NAME = None 
 
 # Định nghĩa Public IDs và tên file tạm thời trên Server
@@ -28,6 +31,7 @@ LOG_FILE_PUBLIC_ID = 'app_config/activity_log'
 USER_LOCAL_TEMP = 'users_temp.json'
 LOG_LOCAL_TEMP = 'log_temp.txt'
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'temp_uploads')
+MEDIA_FOLDER = "client_files/" # Thư mục lưu trữ media
 
 # --- KHỞI TẠO FLASK VÀ CẤU HÌNH ---
 app = Flask(__name__)
@@ -41,10 +45,12 @@ if not os.path.exists(UPLOAD_FOLDER):
 if CLOUDINARY_URL:
     try:
         cloudinary.config(cloudinary_url=CLOUDINARY_URL)
+        # Trích xuất CLOUD_NAME sau khi cấu hình
         CLOUDINARY_CLOUD_NAME = cloudinary.config().cloud_name
         print("Cloudinary cấu hình thành công bằng CLOUDINARY_URL.")
     except Exception as e:
         print(f"LỖI: Cấu hình Cloudinary bằng URL thất bại: {e}")
+        # Đặt lại thành None để báo hiệu cấu hình thất bại
         CLOUDINARY_CLOUD_NAME = None 
 else:
     print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
@@ -180,6 +186,9 @@ def log_action_server(username, action, details="", status="Thành công"):
 # 1. Tải lên file media
 @app.route('/upload', methods=['POST'])
 def upload_file():
+    if not CLOUDINARY_CLOUD_NAME:
+        return jsonify({"message": "Lỗi cấu hình Cloudinary trên server."}), 500
+        
     if 'file' not in request.files:
         return jsonify({"message": "No file part"}), 400
     
@@ -194,7 +203,7 @@ def upload_file():
         
         try:
             # Tải lên Cloudinary. Đặt resource_type="auto" để Cloudinary tự phân loại media
-            result = cloudinary.uploader.upload(local_path, folder="client_files", public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
+            result = cloudinary.uploader.upload(local_path, folder=MEDIA_FOLDER.strip('/'), public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
             os.remove(local_path) 
             
             return jsonify({
@@ -216,20 +225,19 @@ def list_files():
          
     try:
         # Lấy danh sách tài nguyên trong thư mục 'client_files/'
-        # Sử dụng type="upload" là đúng, nhưng chúng ta sẽ thử nhiều loại tài nguyên
+        # Gộp kết quả từ image và raw để đảm bảo tìm thấy tất cả các loại tệp (media + docs)
         
-        # Thử lấy tất cả tài nguyên (image, video, raw)
-        result_image = cloudinary.api.resources(type="upload", prefix="client_files/", max_results=500, resource_type="image")
-        result_raw = cloudinary.api.resources(type="upload", prefix="client_files/", max_results=500, resource_type="raw")
+        result_image = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type="image")
+        result_raw = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type="raw")
 
-        # Gộp các kết quả lại (tránh trùng lặp nếu có)
+        # Gộp các kết quả lại
         all_resources = {r['public_id']: r for r in result_image.get('resources', []) + result_raw.get('resources', [])}
         
         files_list = []
         for public_id, resource in all_resources.items():
             
             file_format = resource.get('format')
-            if not file_format: continue # Bỏ qua nếu không có format (chưa hoàn thành upload)
+            if not file_format: continue 
             
             filename_base = public_id.split('/')[-1]
             filename_with_ext = filename_base + '.' + file_format
@@ -242,7 +250,7 @@ def list_files():
                 resource_type=resource.get('resource_type', 'image') 
             )
             
-            # Chỉ trả về file media, không trả về file cấu hình (users/log)
+            # Chỉ trả về file media, không trả về file cấu hình
             if filename_base not in ['users', 'activity_log']:
                 files_list.append({
                     "name": filename_with_ext,
@@ -253,27 +261,24 @@ def list_files():
         return jsonify(files_list), 200
     except Exception as e:
         print(f"LỖI API CLOUDINARY KHI LẤY LIST: {e}")
-        # Trả về lỗi 500 nhưng kèm thông báo rõ ràng hơn
-        return jsonify({"message": f"Lỗi Server khi truy vấn Cloudinary API: {e}"}), 500
+        # Trả về lỗi 500 kèm thông báo rõ ràng hơn
+        return jsonify({"message": f"Lỗi Server khi truy vấn Cloudinary API: {e}. Kiểm tra Cloudinary Dashboard."}), 500
 
 # 3. Xóa file media
 @app.route('/delete/<filename>', methods=['DELETE'])
 def delete_file(filename):
     try:
         base_name, ext = os.path.splitext(filename)
-        public_id = "client_files/" + base_name
+        public_id = MEDIA_FOLDER + base_name
         
-        # Thử xóa tài nguyên với resource_type='image' (mặc định cho media)
-        result = cloudinary.uploader.destroy(public_id, resource_type="image") 
+        # Thử xóa với resource_type="image" và "raw"
+        result_img = cloudinary.uploader.destroy(public_id, resource_type="image") 
+        result_raw = cloudinary.uploader.destroy(public_id, resource_type="raw")
         
-        if result.get('result') == 'not found':
-             # Nếu không tìm thấy, thử xóa với resource_type='raw'
-            result = cloudinary.uploader.destroy(public_id, resource_type="raw")
-        
-        if result.get('result') == 'ok':
+        if result_img.get('result') == 'ok' or result_raw.get('result') == 'ok':
             return jsonify({"message": f"File {filename} deleted successfully"}), 200
         else:
-            return jsonify({"message": f"File deletion failed: {result.get('result')}"}), 404
+            return jsonify({"message": f"File deletion failed: {result_img.get('result')}"}), 404
     except Exception as e:
         return jsonify({"message": f"Error deleting file: {e}"}), 500
 
