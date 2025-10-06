@@ -14,6 +14,7 @@ import requests
 import cloudinary
 import cloudinary.uploader
 import cloudinary.utils
+import cloudinary.api # <<< ĐÃ THÊM DÒNG IMPORT THIẾU NÀY >>>
 
 # ====================================================================
 # BIẾN CẤU HÌNH VÀ KHỞI TẠO
@@ -220,7 +221,6 @@ def list_files():
          
     try:
         # LƯU Ý: Đây là đoạn code quan trọng nhất đã được tối ưu cho độ ổn định.
-        # Chúng ta dùng loại (type) chung nhất: "upload" để tìm kiếm.
         
         result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500)
         
@@ -228,8 +228,7 @@ def list_files():
         for resource in result.get('resources', []):
             
             file_format = resource.get('format')
-            # Kiểm tra lỗi cấu trúc dữ liệu
-            if not file_format or not resource.get('public_id'): continue 
+            if not file_format: continue 
             
             public_id = resource['public_id']
             filename_base = public_id.split('/')[-1]
