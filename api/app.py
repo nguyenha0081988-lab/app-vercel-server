@@ -22,6 +22,7 @@ import cloudinary.api
 
 CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
 CLOUDINARY_CLOUD_NAME = None 
+REQUEST_TIMEOUT = 60 # Đặt timeout chung cho network I/O là 60 giây
 
 # Định nghĩa Public IDs và tên file tạm thời trên Server
 USER_FILE_PUBLIC_ID = 'app_config/users'
@@ -73,9 +74,11 @@ def download_file_from_cloudinary(public_id, local_filename):
         
     try:
         file_ext = os.path.splitext(local_filename)[1].strip('.')
+        # Sửa đổi: Sử dụng resource_type='raw' để tải các file không phải ảnh (bao gồm users.json)
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=file_ext)[0]
         
-        response = requests.get(url, stream=True)
+        # SỬ DỤNG REQUEST_TIMEOUT
+        response = requests.get(url, stream=True, timeout=REQUEST_TIMEOUT) 
         response.raise_for_status()
         with open(local_filename, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -96,9 +99,10 @@ def upload_file_to_cloudinary(local_filename, public_id):
     try:
         result = cloudinary.uploader.upload(
             local_filename,
-            resource_type='raw',
+            resource_type='raw', # Luôn dùng 'raw' cho các file cấu hình như users.json
             public_id=public_id,
-            overwrite=True
+            overwrite=True,
+            timeout=REQUEST_TIMEOUT # SỬ DỤNG REQUEST_TIMEOUT
         )
         return result
     except Exception as e:
@@ -129,6 +133,7 @@ def load_users_data():
     except FileNotFoundError:
         return initialize_default_users() 
     except Exception:
+        # Xử lý lỗi JSON Decode hoặc lỗi khác bằng cách tạo lại file
         return initialize_default_users()
 
 def save_users_data(users):
@@ -200,13 +205,20 @@ def upload_file():
         uploaded_file.save(local_path)
         
         try:
-            # Tải lên Cloudinary. Đặt resource_type="auto" để Cloudinary tự phân loại media
-            result = cloudinary.uploader.upload(local_path, folder=MEDIA_FOLDER.strip('/'), public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
+            # Tải lên Cloudinary. Đặt resource_type="auto"
+            result = cloudinary.uploader.upload(
+                local_path, 
+                folder=MEDIA_FOLDER.strip('/'), 
+                public_id=os.path.splitext(filename)[0], 
+                overwrite=True, 
+                resource_type="auto", 
+                timeout=REQUEST_TIMEOUT # Dùng timeout 60s
+            )
             
-            # --- SỬA LỖI KEYERROR: 'format' ---
+            # Lấy format (đuôi file) hoặc mặc định là 'raw'
             file_format = result.get('format', os.path.splitext(filename)[1].strip('.'))
             if not file_format:
-                 file_format = 'raw' # Dùng 'raw' nếu không có đuôi
+                 file_format = 'raw' 
 
             # Xóa file tạm
             try:
@@ -215,13 +227,14 @@ def upload_file():
             except OSError as e:
                 print(f"CẢNH BÁO: Không thể xóa file tạm {local_path}: {e}")
             
+            # Trả về tên file chính xác (base name + format)
             return jsonify({
                 "message": "Upload successful",
                 "filename": result['public_id'].split('/')[-1] + '.' + file_format, 
                 "url": result['secure_url']
             }), 200
         except Exception as e:
-            # --- XỬ LÝ LỖI FILE NOT FOUND SAU KHI XẢY RA EXCEPTION ---
+            # Xử lý dọn dẹp file tạm nếu upload lỗi
             if local_path:
                 try:
                     os.remove(local_path)
@@ -231,7 +244,7 @@ def upload_file():
     
     return jsonify({"message": "Something went wrong"}), 500
 
-# 2. Lấy danh sách file media (Đã sửa lỗi resource_type an toàn hơn)
+# 2. Lấy danh sách file media 
 @app.route('/list', methods=['GET'])
 def list_files():
     if not CLOUDINARY_CLOUD_NAME:
@@ -240,17 +253,24 @@ def list_files():
     try:
         files_list = []
         
-        # Danh sách các loại tài nguyên cần tìm kiếm
+        # Danh sách các loại tài nguyên cần tìm kiếm (Đã sửa lỗi không hiện file)
         resource_types = ["image", "raw", "video", "auto"]
         all_resources = {}
 
         for r_type in resource_types:
             try:
-                result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type=r_type)
+                # Dùng timeout 60s
+                result = cloudinary.api.resources(
+                    type="upload", 
+                    prefix=MEDIA_FOLDER, 
+                    max_results=500, 
+                    resource_type=r_type, 
+                    timeout=REQUEST_TIMEOUT
+                )
+                
                 # Gộp kết quả vào dictionary để tránh trùng lặp public_id
                 all_resources.update({r['public_id']: r for r in result.get('resources', [])})
             except Exception as e:
-                # Nếu một resource_type nào đó bị lỗi, bỏ qua và thử loại tiếp theo
                 print(f"CẢNH BÁO: Truy vấn resource_type='{r_type}' thất bại: {e}")
                 continue
 
@@ -293,8 +313,8 @@ def delete_file(filename):
         public_id = MEDIA_FOLDER + base_name
         
         # Thử xóa với resource_type="image" và "raw"
-        result_img = cloudinary.uploader.destroy(public_id, resource_type="image") 
-        result_raw = cloudinary.uploader.destroy(public_id, resource_type="raw")
+        result_img = cloudinary.uploader.destroy(public_id, resource_type="image", timeout=REQUEST_TIMEOUT) 
+        result_raw = cloudinary.uploader.destroy(public_id, resource_type="raw", timeout=REQUEST_TIMEOUT)
         
         if result_img.get('result') == 'ok' or result_raw.get('result') == 'ok':
             return jsonify({"message": f"File {filename} deleted successfully"}), 200
@@ -363,7 +383,7 @@ def delete_user(username):
     if username in users_data:
         del users_data[username]
         save_users_data(users_data)
-        return jsonify({"success": True, "message": f"Người dùng {username} đã bị xóa"}), 200
+        return jsonify({"success": True, "message": f"Người dùng {username} đã được xóa"}), 200
     
     return jsonify({"success": False, "message": "Người dùng không tồn tại"}), 404
 
@@ -392,5 +412,6 @@ def read_all_logs():
 
 if __name__ == '__main__':
     # Khởi tạo CSDL người dùng lần đầu nếu chưa có
+    # Tác vụ này chạy trước app.run để đảm bảo dữ liệu sẵn sàng
     load_users_data()
     app.run(debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
