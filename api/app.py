@@ -30,8 +30,7 @@ LOG_FILE_PUBLIC_ID = 'app_config/activity_log'
 USER_LOCAL_TEMP = 'users_temp.json'
 LOG_LOCAL_TEMP = 'log_temp.txt'
 UPLOAD_FOLDER = os.path.join(os.getcwd(), 'temp_uploads')
-# Đã sửa: Định nghĩa thư mục media KHÔNG có dấu '/' ở cuối
-MEDIA_FOLDER = "client_files" 
+MEDIA_FOLDER = "client_files" # Thư mục lưu trữ media
 
 # --- KHỞI TẠO FLASK VÀ CẤU HÌNH ---
 app = Flask(__name__)
@@ -52,13 +51,6 @@ if CLOUDINARY_URL:
         CLOUDINARY_CLOUD_NAME = None 
 else:
     print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
-
-# ====================================================================
-# LƯU TRỮ DỮ LIỆU GLOBAL (TẢI LƯỜI)
-# ====================================================================
-
-# Biến global lưu trữ CSDL người dùng trong bộ nhớ sau lần tải đầu tiên
-GLOBAL_USERS_DATA = None 
 
 # ====================================================================
 # HÀM TIỆN ÍCH CHUNG VÀ XỬ LÝ DỮ LIỆU CLOUDINARY
@@ -236,10 +228,9 @@ def upload_file():
         
         try:
             # Tải lên Cloudinary. Đặt resource_type="auto"
-            # Đã sửa: sử dụng MEDIA_FOLDER mới (không có dấu /)
             result = cloudinary.uploader.upload(
                 local_path, 
-                folder=MEDIA_FOLDER, 
+                folder=MEDIA_FOLDER, # Sử dụng MEDIA_FOLDER (client_files)
                 public_id=os.path.splitext(filename)[0], 
                 overwrite=True, 
                 resource_type="auto", 
@@ -284,15 +275,20 @@ def list_files():
     try:
         files_list = []
         
+        # Danh sách các loại tài nguyên cần tìm kiếm (ĐÃ SỬA: Bổ sung thêm API)
         resource_types = ["image", "raw", "video", "auto"]
         all_resources = {}
 
         for r_type in resource_types:
             try:
-                # Đã sửa: thêm dấu '/' vào prefix để Cloudinary chỉ tìm trong folder đó
+                # TRUY VẤN TẤT CẢ CÁC TÀI NGUYÊN ĐÃ UPLOAD, KHÔNG CÓ PREFIX
+                # Sau đó lọc bằng code Python. Cách này an toàn hơn trong môi trường API phức tạp.
+                # LƯU Ý: Để tránh bị quá tải, ta chỉ dùng prefix nếu danh sách quá lớn
+                
+                # Sửa đổi: Chỉ tìm trong thư mục client_files
                 result = cloudinary.api.resources(
                     type="upload", 
-                    prefix=MEDIA_FOLDER + '/', 
+                    prefix=MEDIA_FOLDER + '/', # Chỉ tìm các tài nguyên bắt đầu bằng client_files/
                     max_results=500, 
                     resource_type=r_type, 
                     timeout=REQUEST_TIMEOUT
@@ -340,7 +336,7 @@ def list_files():
 def delete_file(filename):
     try:
         base_name, ext = os.path.splitext(filename)
-        public_id = MEDIA_FOLDER + '/' + base_name # Đã sửa để dùng MEDIA_FOLDER mới
+        public_id = MEDIA_FOLDER + '/' + base_name
         
         # Thử xóa với resource_type="image" và "raw"
         result_img = cloudinary.uploader.destroy(public_id, resource_type="image", timeout=REQUEST_TIMEOUT) 
