@@ -74,7 +74,6 @@ def download_file_from_cloudinary(public_id, local_filename):
         
     try:
         file_ext = os.path.splitext(local_filename)[1].strip('.')
-        # Sửa đổi: Sử dụng resource_type='raw' để tải các file không phải ảnh (bao gồm users.json)
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=file_ext)[0]
         
         # SỬ DỤNG REQUEST_TIMEOUT
@@ -99,7 +98,7 @@ def upload_file_to_cloudinary(local_filename, public_id):
     try:
         result = cloudinary.uploader.upload(
             local_filename,
-            resource_type='raw', # Luôn dùng 'raw' cho các file cấu hình như users.json
+            resource_type='raw',
             public_id=public_id,
             overwrite=True,
             timeout=REQUEST_TIMEOUT # SỬ DỤNG REQUEST_TIMEOUT
@@ -133,7 +132,6 @@ def load_users_data():
     except FileNotFoundError:
         return initialize_default_users() 
     except Exception:
-        # Xử lý lỗi JSON Decode hoặc lỗi khác bằng cách tạo lại file
         return initialize_default_users()
 
 def save_users_data(users):
@@ -181,8 +179,16 @@ def log_action_server(username, action, details="", status="Thành công"):
         print(f"LỖI LỚN KHI GHI LOG LÊN CLOUDINARY: {e}")
 
 # ====================================================================
-# API ROUTES CHO FILE MEDIA
+# API ROUTES
 # ====================================================================
+
+# <<< ROUTE MỚI: Xử lý URL gốc (/) >>>
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "status": "Server Running",
+        "message": "API Server đã hoạt động. Vui lòng sử dụng ứng dụng client."
+    }), 200
 
 # 1. Tải lên file media
 @app.route('/upload', methods=['POST'])
@@ -212,7 +218,7 @@ def upload_file():
                 public_id=os.path.splitext(filename)[0], 
                 overwrite=True, 
                 resource_type="auto", 
-                timeout=REQUEST_TIMEOUT # Dùng timeout 60s
+                timeout=REQUEST_TIMEOUT 
             )
             
             # Lấy format (đuôi file) hoặc mặc định là 'raw'
@@ -412,6 +418,5 @@ def read_all_logs():
 
 if __name__ == '__main__':
     # Khởi tạo CSDL người dùng lần đầu nếu chưa có
-    # Tác vụ này chạy trước app.run để đảm bảo dữ liệu sẵn sàng
     load_users_data()
     app.run(debug=True, host='0.0.0.0', port=os.environ.get('PORT', 5000))
