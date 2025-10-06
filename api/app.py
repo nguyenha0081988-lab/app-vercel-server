@@ -16,15 +16,16 @@ import cloudinary.uploader
 import cloudinary.utils
 
 # ====================================================================
-# BIẾN CẤU HÌNH CLOUDINARY (THAY THẾ BẰNG THÔNG TIN THỰC TẾ CỦA BẠN)
-# ====================================================================
-# SỬA CÁC GIÁ TRỊ NÀY VỚI THÔNG TIN CLOUDINARY CỦA BẠN
-CLOUDINARY_CLOUD_NAME = 'de8lh9qxq' 
-CLOUDINARY_API_KEY = '351243166992655'
-CLOUDINARY_API_SECRET = 'vxULOfLEa8yyxD4tJKq3GpcJFLc'
+# BIẾN CẤU HÌNH VÀ KHỞI TẠO
 # ====================================================================
 
-# ĐỊNH NGHĨA CLOUDINARY PUBLIC IDs VÀ TÊN FILE TẠM THỜI TRÊN SERVER
+# Lấy Biến môi trường CLOUDINARY_URL (Biến duy nhất được sử dụng)
+CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL')
+
+# Biến CLOUDINARY_CLOUD_NAME sẽ được trích xuất tự động từ URL
+CLOUDINARY_CLOUD_NAME = None 
+
+# Định nghĩa Public IDs và tên file tạm thời trên Server
 USER_FILE_PUBLIC_ID = 'app_config/users'
 LOG_FILE_PUBLIC_ID = 'app_config/activity_log'
 USER_LOCAL_TEMP = 'users_temp.json'
@@ -33,18 +34,25 @@ UPLOAD_FOLDER = os.path.join(os.getcwd(), 'temp_uploads')
 
 # --- KHỞI TẠO FLASK VÀ CẤU HÌNH ---
 app = Flask(__name__)
-CORS(app) # Cho phép CORS cho Client PyQt
+CORS(app) 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Cấu hình Cloudinary
-cloudinary.config( 
-  cloud_name = CLOUDINARY_CLOUD_NAME, 
-  api_key = CLOUDINARY_API_KEY, 
-  api_secret = CLOUDINARY_API_SECRET
-)
+# Cấu hình Cloudinary (CHỈ DÙNG CLOUDINARY_URL)
+if CLOUDINARY_URL:
+    try:
+        cloudinary.config(cloudinary_url=CLOUDINARY_URL)
+        # Trích xuất CLOUD_NAME sau khi cấu hình
+        CLOUDINARY_CLOUD_NAME = cloudinary.config().cloud_name
+        print("Cloudinary cấu hình thành công bằng CLOUDINARY_URL.")
+    except Exception as e:
+        print(f"LỖI: Cấu hình Cloudinary bằng URL thất bại: {e}")
+        # Đặt lại thành None để báo hiệu cấu hình thất bại
+        CLOUDINARY_CLOUD_NAME = None 
+else:
+    print("CẢNH BÁO: Thiếu biến môi trường CLOUDINARY_URL. Các chức năng Cloudinary sẽ thất bại.")
 
 # ====================================================================
 # HÀM TIỆN ÍCH CHUNG VÀ XỬ LÝ DỮ LIỆU CLOUDINARY
@@ -55,17 +63,19 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 def admin_required(f):
-    """Decorator kiểm tra quyền admin. Tạm thời không chặn ở Server
-       để Client dễ dàng gọi (vì Client đã có logic kiểm tra Admin)."""
+    """Decorator kiểm tra quyền admin."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # LƯU Ý: Trong ứng dụng thực tế, nên kiểm tra Token/Session ở đây
         return f(*args, **kwargs)
     return decorated_function
 
 def download_file_from_cloudinary(public_id, local_filename):
     """Tải file từ Cloudinary về Server tạm thời."""
+    if not CLOUDINARY_CLOUD_NAME:
+        raise Exception("Cloudinary chưa được cấu hình.")
+        
     try:
+        # Tải xuống bằng resource_type='raw' cho JSON/TXT
         url = cloudinary.utils.cloudinary_url(public_id, resource_type='raw', format=os.path.splitext(local_filename)[1].strip('.'))[0]
         
         response = requests.get(url, stream=True)
@@ -83,6 +93,9 @@ def download_file_from_cloudinary(public_id, local_filename):
 
 def upload_file_to_cloudinary(local_filename, public_id):
     """Tải file từ Server tạm thời lên Cloudinary, ghi đè file cũ."""
+    if not CLOUDINARY_CLOUD_NAME:
+        raise Exception("Cloudinary chưa được cấu hình.")
+        
     try:
         result = cloudinary.uploader.upload(
             local_filename,
@@ -150,20 +163,16 @@ def read_logs_from_cloudinary():
 def log_action_server(username, action, details="", status="Thành công"):
     """Ghi log hoạt động vào Cloudinary Log File."""
     try:
-        # Tải log hiện tại
         logs = read_logs_from_cloudinary()
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         new_log_entry = f"[{timestamp}] - User:{username} - {action}: {details} ({status})\n"
         
-        # Thêm dòng log mới vào cuối
         logs.append(new_log_entry)
         
-        # Ghi toàn bộ nội dung mới vào file tạm
         with open(LOG_LOCAL_TEMP, 'w', encoding='utf-8') as f:
             f.writelines(logs)
 
-        # Tải file tạm lên Cloudinary
         upload_file_to_cloudinary(LOG_LOCAL_TEMP, LOG_FILE_PUBLIC_ID)
         os.remove(LOG_LOCAL_TEMP)
     except Exception as e:
@@ -257,7 +266,7 @@ def get_users():
 def authenticate():
     data = request.get_json()
     username = data.get('username')
-    password_hash = data.get('password_hash') # Client gửi hash
+    password_hash = data.get('password_hash')
     
     users_data = load_users_data()
     
@@ -322,7 +331,6 @@ def record_log():
 @admin_required
 def read_all_logs():
     logs = read_logs_from_cloudinary()
-    # Loại bỏ ký tự xuống dòng và khoảng trắng
     return jsonify([log.strip() for log in logs]), 200
 
 
