@@ -192,7 +192,7 @@ def upload_file():
     if uploaded_file.filename == '':
         return jsonify({"message": "No selected file"}), 400
     
-    local_path = None # Khởi tạo local_path
+    local_path = None
     
     if uploaded_file:
         filename = secure_filename(uploaded_file.filename)
@@ -200,7 +200,7 @@ def upload_file():
         uploaded_file.save(local_path)
         
         try:
-            # Tải lên Cloudinary. resource_type="auto"
+            # Tải lên Cloudinary. Đặt resource_type="auto" để Cloudinary tự phân loại media
             result = cloudinary.uploader.upload(local_path, folder=MEDIA_FOLDER.strip('/'), public_id=os.path.splitext(filename)[0], overwrite=True, resource_type="auto")
             
             # --- SỬA LỖI KEYERROR: 'format' ---
@@ -217,11 +217,11 @@ def upload_file():
             
             return jsonify({
                 "message": "Upload successful",
-                "filename": result['public_id'].split('/')[-1] + '.' + file_format, # SỬ DỤNG file_format ĐÃ KIỂM TRA
+                "filename": result['public_id'].split('/')[-1] + '.' + file_format, 
                 "url": result['secure_url']
             }), 200
         except Exception as e:
-            # --- SỬA LỖI FILE NOT FOUND SAU KHI XẢY RA EXCEPTION ---
+            # --- XỬ LÝ LỖI FILE NOT FOUND SAU KHI XẢY RA EXCEPTION ---
             if local_path:
                 try:
                     os.remove(local_path)
@@ -231,23 +231,35 @@ def upload_file():
     
     return jsonify({"message": "Something went wrong"}), 500
 
-# 2. Lấy danh sách file media 
+# 2. Lấy danh sách file media (Đã sửa lỗi resource_type an toàn hơn)
 @app.route('/list', methods=['GET'])
 def list_files():
     if not CLOUDINARY_CLOUD_NAME:
          return jsonify({"message": "Lỗi cấu hình Cloudinary trên server."}), 500
          
     try:
-        # Lấy danh sách tài nguyên trong thư mục 'client_files/'
-        result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500)
-        
         files_list = []
-        for resource in result.get('resources', []):
+        
+        # Danh sách các loại tài nguyên cần tìm kiếm
+        resource_types = ["image", "raw", "video", "auto"]
+        all_resources = {}
+
+        for r_type in resource_types:
+            try:
+                result = cloudinary.api.resources(type="upload", prefix=MEDIA_FOLDER, max_results=500, resource_type=r_type)
+                # Gộp kết quả vào dictionary để tránh trùng lặp public_id
+                all_resources.update({r['public_id']: r for r in result.get('resources', [])})
+            except Exception as e:
+                # Nếu một resource_type nào đó bị lỗi, bỏ qua và thử loại tiếp theo
+                print(f"CẢNH BÁO: Truy vấn resource_type='{r_type}' thất bại: {e}")
+                continue
+
+
+        for public_id, resource in all_resources.items():
             
             file_format = resource.get('format')
             if not file_format: continue 
             
-            public_id = resource['public_id']
             filename_base = public_id.split('/')[-1]
             filename_with_ext = filename_base + '.' + file_format
             
@@ -375,7 +387,7 @@ def record_log():
 @admin_required
 def read_all_logs():
     logs = read_logs_from_cloudinary()
-    return jsonify([log.strip() for log in logs]), 00
+    return jsonify([log.strip() for log in logs]), 200
 
 
 if __name__ == '__main__':
