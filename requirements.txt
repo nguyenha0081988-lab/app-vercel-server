@@ -2,3 +2,4 @@ Flask
 cloudinary
 requests
 gunicorn
+flask_cors
